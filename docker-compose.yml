@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: healthai-mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - healthai
+
+  backend:
+    build: ./ai-server
+    container_name: healthai-backend
+    ports:
+      - "5000:5000"
+    environment:
+      MONGODB_URI: mongodb://admin:admin@mongodb:27017/healthai
+      FLASK_ENV: development
+    depends_on:
+      - mongodb
+    networks:
+      - healthai
+    command: python app.py
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: healthai-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://backend:5000
+      MONGODB_URI: mongodb://admin:admin@mongodb:27017/healthai
+    depends_on:
+      - backend
+    networks:
+      - healthai
+
+volumes:
+  mongo_data:
+
+networks:
+  healthai:
+    driver: bridge
