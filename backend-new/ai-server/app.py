@@ -360,6 +360,18 @@ def predict_disease_from_text(symptom_text):
         traceback.print_exc()
         raise
 
+@app.route('/', methods=['GET'])
+def root():
+    """Root endpoint"""
+    return jsonify({
+        'message': 'Health AI Chatbot Backend API',
+        'status': 'running',
+        'endpoints': {
+            'health': '/health',
+            'predict': '/predict (POST)'
+        }
+    })
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
