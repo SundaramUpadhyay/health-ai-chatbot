@@ -21,15 +21,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Image or text is required" }, { status: 400 })
     }
 
-    // Call the external AI model for disease prediction
-    // Uses local AI server by default (ai-server/app.py)
-    const AI_MODEL_ENDPOINT = process.env.AI_MODEL_ENDPOINT || "http://localhost:5000/predict"
+    // Prefer the deployed AI server URL and derive /predict endpoint if needed.
+    const aiServerBaseUrl = process.env.AI_SERVER_URL || "http://localhost:5000"
+    const configuredEndpoint = process.env.AI_MODEL_ENDPOINT
+    const AI_MODEL_ENDPOINT = configuredEndpoint
+      ? configuredEndpoint
+      : `${aiServerBaseUrl.replace(/\/$/, "")}/predict`
 
     try {
       console.log("🤖 Calling AI endpoint:", AI_MODEL_ENDPOINT)
       
       const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 30000) // 30 seconds timeout
+      const timeout = setTimeout(() => controller.abort(), 65000) // allow Render free-tier cold starts
 
       let requestBody: any = {}
 
@@ -67,10 +70,12 @@ export async function POST(request: NextRequest) {
       const prediction = await aiResponse.json()
       console.log("✅ AI prediction received:", prediction)
       
+      const confidence = Number(prediction.confidence ?? prediction.probability ?? 0.0)
+
       // Return the prediction in the expected format
       return NextResponse.json({
         disease: prediction.disease || prediction.class || prediction.predicted_class || "Unknown",
-        confidence: prediction.confidence || prediction.probability || 0.6,
+        confidence,
         prescription: prediction.prescription || prediction.treatment || ["Consult a healthcare professional"],
         recommendations: prediction.recommendations || prediction.advice || ["Please see a dermatologist for proper diagnosis"],
         reply: prediction.reply || `I detected ${prediction.disease || 'a skin condition'}. ${prediction.description || 'Please consult a healthcare professional.'}`,
@@ -80,11 +85,15 @@ export async function POST(request: NextRequest) {
       console.error("❌ AI model error:", aiError.message)
       console.error("Full error:", aiError)
       
+      const isTimeout = aiError?.name === "AbortError"
+
       // Return user-friendly error
       return NextResponse.json(
         { 
           error: "AI model is currently unavailable", 
-          details: "Please make sure your ngrok tunnel is running and the endpoint is accessible",
+          details: isTimeout
+            ? "The AI server may be waking up from inactivity. Please try again in 30-60 seconds."
+            : "Please make sure the AI server endpoint is accessible.",
           technicalDetails: aiError.message,
           fallback: true 
         },
