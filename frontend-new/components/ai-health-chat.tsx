@@ -88,31 +88,58 @@ export default function AIHealthChat({ onClose, fullPage = false }: AIHealthChat
     input?.click()
   }
 
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
   // -----------------------------
   // AI IMAGE ANALYSIS (with LOW CONFIDENCE handling)
   // -----------------------------
   const analyzeDiseaseImage = async (imageBase64: string): Promise<any> => {
     try {
-      const response = await fetch("/api/ai/analyze-disease", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({ image: imageBase64 }),
-      })
+      let response: Response | null = null
+      let errorMessage = "Failed to analyze image"
 
-      if (!response.ok) throw new Error("Failed to analyze image")
-      return await response.json()
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        response = await fetch("/api/ai/analyze-disease", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+          body: JSON.stringify({ image: imageBase64 }),
+        })
+
+        if (response.ok) {
+          return await response.json()
+        }
+
+        let errorData: any = null
+        try {
+          errorData = await response.json()
+        } catch {
+          errorData = null
+        }
+
+        errorMessage = errorData?.details || errorData?.error || `Image analysis failed (${response.status})`
+        const shouldRetry = response.status === 503 || response.status === 504
+
+        if (attempt < 2 && shouldRetry) {
+          await wait(3000)
+          continue
+        }
+
+        break
+      }
+
+      return {
+        error: true,
+        message: errorMessage,
+      }
     } catch (error) {
       console.error("Image analysis error:", error)
 
-      // fallback fake response
       return {
-        disease: "unknown",
-        confidence: 0.22,
-        prescription: [],
-        recommendations: [],
+        error: true,
+        message: "Image analysis service is temporarily unavailable. Please try again.",
       }
     }
   }
@@ -169,7 +196,25 @@ export default function AIHealthChat({ onClose, fullPage = false }: AIHealthChat
       if (selectedImage && imagePreview) {
         const diagnosis = await analyzeDiseaseImage(imagePreview)
 
-        const isLow = diagnosis.confidence < 0.40 || diagnosis.disease === "unknown"
+        if (diagnosis?.error) {
+          botResponse = {
+            id: (Date.now() + 1).toString(),
+            text:
+              `⚠️ Image analysis is temporarily unavailable.\n\n` +
+              `${diagnosis.message || "Please try again in a moment."}`,
+            sender: "bot",
+            timestamp: new Date(),
+          }
+
+          removeImage()
+          setActiveTab("chat")
+          setMessages(prev => [...prev, botResponse])
+          setLoading(false)
+          return
+        }
+
+        const normalizedDisease = String(diagnosis.disease || "").toLowerCase()
+        const isLow = diagnosis.confidence < 0.30 || normalizedDisease === "unknown"
 
         if (isLow) {
           botResponse = {
