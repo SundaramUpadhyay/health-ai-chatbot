@@ -15,7 +15,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid token" }, { status: 401 })
     }
 
-    const { message } = await request.json()
+    const body = await request.json()
+    const message = body?.message || body?.text
 
     if (!message) {
       return NextResponse.json({ error: "Message is required" }, { status: 400 })
@@ -28,6 +29,9 @@ export async function POST(request: NextRequest) {
 
     try {
       // Try to get symptom-based diagnosis from the trained model
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 65000)
+
       const aiServerResponse = await fetch(`${AI_SERVER_URL}/predict`, {
         method: "POST",
         headers: {
@@ -36,8 +40,10 @@ export async function POST(request: NextRequest) {
         body: JSON.stringify({
           text: message
         }),
-        timeout: 10000
+        signal: controller.signal,
       })
+
+      clearTimeout(timeoutId)
 
       if (aiServerResponse.ok) {
         const prediction = await aiServerResponse.json()
@@ -82,6 +88,7 @@ I can diagnose:
         throw new Error("AI server not responding")
       }
     } catch (error: any) {
+      const isTimeout = error?.name === "AbortError"
       console.warn("AI server unavailable, using fallback response:", error.message)
       
       response = `I'm your AI Health Assistant.
@@ -103,7 +110,9 @@ I can identify:
 • Melanocytic Nevi (Moles)
 • Vascular Lesions
 
-⚠️ **Always consult a dermatologist for proper diagnosis!**`
+⚠️ **Always consult a dermatologist for proper diagnosis!**
+
+${isTimeout ? "\n\n⏳ The AI server may be waking up from inactivity. Please try again in 30-60 seconds." : ""}`
     }
 
     return NextResponse.json({ response, diseaseInfo })

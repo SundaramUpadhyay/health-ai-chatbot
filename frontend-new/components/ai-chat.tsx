@@ -47,12 +47,12 @@ export function AiChat() {
     setLoading(true)
 
     try {
-      const token = localStorage.getItem('authToken')
+      const token = localStorage.getItem('token')
       if (!token) {
         throw new Error('No authentication token found')
       }
 
-      const response = await fetch('/api/ai/analyze-disease', {
+      const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -71,7 +71,7 @@ export function AiChat() {
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: data.reply || data.disease || 'I could not process your request. Please try again.',
+        content: data.response || data.reply || data.disease || 'I could not process your request. Please try again.',
         timestamp: new Date(),
       }
 
