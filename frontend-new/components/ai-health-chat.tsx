@@ -90,6 +90,20 @@ export default function AIHealthChat({ onClose, fullPage = false }: AIHealthChat
 
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+  const fetchWithTimeout = async (url: string, options: RequestInit, timeoutMs = 45000) => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
   // -----------------------------
   // AI IMAGE ANALYSIS (with LOW CONFIDENCE handling)
   // -----------------------------
@@ -99,14 +113,14 @@ export default function AIHealthChat({ onClose, fullPage = false }: AIHealthChat
       let errorMessage = "Failed to analyze image"
 
       for (let attempt = 1; attempt <= 2; attempt++) {
-        response = await fetch("/api/ai/analyze-disease", {
+        response = await fetchWithTimeout("/api/ai/analyze-disease", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${localStorage.getItem("token")}`,
           },
           body: JSON.stringify({ image: imageBase64 }),
-        })
+        }, 50000)
 
         if (response.ok) {
           return await response.json()
@@ -149,21 +163,36 @@ export default function AIHealthChat({ onClose, fullPage = false }: AIHealthChat
   // -----------------------------
   const getAIMedicineAdvice = async (query: string): Promise<string> => {
     try {
-      const response = await fetch("/api/ai/chat", {
+      const response = await fetchWithTimeout("/api/ai/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
         body: JSON.stringify({ message: query }),
-      })
+      }, 50000)
 
-      if (!response.ok) throw new Error("Chat API failed")
+      if (!response.ok) {
+        let errorMessage = "Chat API failed"
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData?.details || errorData?.error || errorMessage
+        } catch {
+          // Ignore response parsing errors and keep generic message
+        }
+
+        throw new Error(errorMessage)
+      }
+
       const data = await response.json()
       return data.response
     } catch (error) {
       console.error("AI chat error:", error)
-      return "I'm having trouble responding. Please try again."
+      if (error instanceof Error && error.name === "AbortError") {
+        return "The AI server is taking too long to respond. It may be waking up from inactivity. Please try again in 30-60 seconds."
+      }
+
+      return "I'm having trouble responding right now. Please try again."
     }
   }
 
@@ -279,18 +308,29 @@ export default function AIHealthChat({ onClose, fullPage = false }: AIHealthChat
 
       setMessages(prev => [...prev, botResponse])
 
-      // Save to backend
-      if (!conversationId) {
-        const response = await conversationAPI.create({
-          message: userInputMemory || "Image analysis request",
-          category: "health-ai",
-        })
-        if (response.data?.conversation) {
-          setConversationId(response.data.conversation._id)
+      // Stop loader as soon as user gets the bot response.
+      setLoading(false)
+
+      // Save chat in background so network slowness does not block UI.
+      ;(async () => {
+        try {
+          if (!conversationId) {
+            const response = await conversationAPI.create({
+              message: userInputMemory || "Image analysis request",
+              category: "health-ai",
+            })
+            if (response.data?.conversation) {
+              setConversationId(response.data.conversation._id)
+            }
+          } else {
+            await conversationAPI.addMessage(conversationId, userInputMemory || "Image analysis", 'user')
+          }
+        } catch (saveError) {
+          console.error("Conversation save error:", saveError)
         }
-      } else {
-        await conversationAPI.addMessage(conversationId, userInputMemory || "Image analysis", 'user')
-      }
+      })()
+
+      return
 
     } catch (err) {
       setMessages(prev => [
